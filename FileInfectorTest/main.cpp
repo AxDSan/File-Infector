@@ -45,6 +45,8 @@
 using namespace pe_bliss;
 using namespace std;
 
+BOOL GetProcAddresses(HINSTANCE *hLibrary, LPCSTR lpszLibrary, INT nCount, ...);
+
 int main(int argc, char* argv[])
 {
 	fstream pe_file(argv[1], ios::in | ios::binary);
@@ -65,6 +67,11 @@ int main(int argc, char* argv[])
 
 			DWORD e_magic		=		image.get_magic();
 			DWORD e_machine		=		image.get_machine();
+			// Get address for MessageBoxA
+			//FARPROC msgBoxAddr = GetProcAddress(GetModuleHandleA("user32.dll"), "MessageBoxA");
+			//decltype(MessageBoxA)* msgBoxAddr = (decltype(MessageBoxA)*)GetProcAddress(GetModuleHandle("user32.dll"), "MessageBoxA");
+
+			
 
 			if (image.is_dotnet())
 			{
@@ -101,92 +108,52 @@ int main(int argc, char* argv[])
 
 					//unsigned uiImpDir = new_section.get_virtual_address() + 0x100; 
 
-					/*typedef double(*LPGETNUMBER)(double Nbr);
-
-					///////////////////////////////////////////////////////////////////////////////////////////////////////////
-					//   This is our Get MessageBox, hopefully to use it later (somehow) in adding it to the new section	 //
-					///////////////////////////////////////////////////////////////////////////////////////////////////////////
-					char DLL[] = "User32";
-					char PROC[] = "MessageBoxA";
-
-					HANDLE Proc;
-					HMODULE hDLL;
-
-
-					cout << "Attempting to load .DLL..." << endl;
-					hDLL = LoadLibrary(DLL);
-
-					if (hDLL == NULL)
-
-					{
-					cout << ".DLL load FAILED!" << endl;
-					}
-
-					else
-
-					{
-					cout << "DLL handle is: " << hDLL << endl
-					cout << "Attempting to get process address..." << endl
-					Proc = GetProcAddress(hDLL, PROC);
-
-					if (Proc == NULL)
-					{
-					FreeLibrary(hDLL);
-					cout << "Process load FAILED!" << endl;
-					}
-
-					else
-
-					{
-					cout << "Process address found at: " << Proc << endl;
-					//Proc(NULL,NULL,NULL,NULL);
-					FreeLibrary(hDLL);
-					}*/
+					
 
 					////////////////////ADD NEW SECTION//////////////////////
 					section new_section;
 					cout << "[+] Adding New Section ..." << endl;
 
+					//Section Name (8 Chars MAX!)
+					const char section_name[8] = ".hw";
 					char data[] = {
 						0x6A, 0x00,							// push	0
-						0x68, 0x00, 0x00, 0x00, 0x00,		// push "PeLib"
-						0x68, 0x00, 0x00, 0x00, 0x00,		// push "Built with PeLib"
+						0x68, 0x00, 0xA0, 0x02, 0xE1,		// push "PeBliss"
+						0x68, 0x00, 0x00, 0x00, 0x00,		// push "Built with PeBliss"
 						0x6A, 0x00,							// push 0
-						0xFF, 0x15, 0x00, 0x00, 0x00, 0x00,	// call MessageBoxA
-						0xE9, 0x00, 0x00, 0x00, 0x00,		// jmp to OEP
+						0xE8, 0x00, 0x00, 0x00, 0x00,		// call MessageBoxA
+						0xE9, 0x00, 0x00, 0x00, 0x00,		// JMP to OEP
 						'B','u','i','l','t',' ',			// Data String...
 						'w','i','t','h',' ',				// ...
-						'P','e','L','i','b', };				// ...
-
+						'P','e','B','l','i', 's', 's' };	// ...
+					
 
 					// New Section Name (our Hello World section :D)
-					new_section.set_name(".hw");
+					new_section.set_name(section_name);
 
-					// Making New Section R/E/W
+					// Set New Section Permissios as R/E/W
 					new_section.readable(true).executable(true).writeable(true);
 
 					// Setting New Section Size
 					image.set_section_virtual_size(new_section, 200);
 
-
 					cout << "[+] Injecting Data to PE ..." << endl;
 
 
-					UINT32 uiOffset = new_section.get_pointer_to_raw_data();
-					//cout << uiOffset << endl; // Debug: this shows 0? shouldn't it be pointing to something in data? read below
+					UINT32 rawDataOffset = new_section.get_pointer_to_raw_data();
 
-					//This should update out written data with respective addresses and calls,
-					//however, it's not properly working, help me out! :D
-					*(DWORD*)(&data[3]) = image.rva_from_section_offset(new_section, uiOffset + 32);
-					*(DWORD*)(&data[8]) = image.rva_from_section_offset(new_section, uiOffset + 21);
-					//*(DWORD*)(&data[16]) = image.rva_from_section_offset(new_section, uiOffset + 0x28); // This should be our MessageBox address, I don't know how to get it though XD
+					*(UINT32*)(&data[3]) = image.rva_from_section_offset(new_section, 35);
+					*(UINT32*)(&data[8]) = image.rva_from_section_offset(new_section, 24);
+					UINT32 *pointer = (UINT32*)&MessageBoxA;
+					cout << "MessageBox Address: " << pointer << endl;
+					*(UINT32*)&data[15] = *(UINT32*)&pointer;
 
 					/////////////////////////////////////////////////////////////////////////////////////
 					// http://stackoverflow.com/questions/8510239/0x00-and-char-arrays/8510323#8510323 //
 					/////////////////////////////////////////////////////////////////////////////////////
 					// As we write the stuff to the section, if the writter see it's null terminated 0x00,
 					// There was a "bug" where it wouldn't write all the way and it would just stop,
-					// Assuming our Push 0 = "0x6A, 0x00" <- was null-terminated.
+					// thus assuming our Push 0 = "0x6A, 0x00" <- was null-terminated.
 					string vData(data, data + sizeof(data) / sizeof(data[0]));
 					///////////////////////////////////////////////////////////
 
@@ -278,4 +245,39 @@ int main(int argc, char* argv[])
 	pe_file.close();
 	PAUSE
 	return 0;
+}
+
+BOOL GetProcAddresses(HINSTANCE *hLibrary,
+	LPCSTR lpszLibrary, INT nCount, ...)
+{
+	va_list va;
+	va_start(va, nCount);
+
+	if ((*hLibrary = LoadLibrary(lpszLibrary))
+		!= NULL)
+	{
+		FARPROC * lpfProcFunction = NULL;
+		LPSTR lpszFuncName = NULL;
+		INT nIdxCount = 0;
+		while (nIdxCount < nCount)
+		{
+			lpfProcFunction = va_arg(va, FARPROC*);
+			lpszFuncName = va_arg(va, LPSTR);
+			if ((*lpfProcFunction =
+				GetProcAddress(*hLibrary,
+					lpszFuncName)) == NULL)
+			{
+				lpfProcFunction = NULL;
+				return FALSE;
+			}
+			nIdxCount++;
+		}
+	}
+	else
+	{
+		va_end(va);
+		return FALSE;
+	}
+	va_end(va);
+	return TRUE;
 }
